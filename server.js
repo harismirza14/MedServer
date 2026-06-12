@@ -1,33 +1,89 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const pool = require("./db");
+const {
+  Prescription,
+  Patient,
+  Medication,
+  Pharmacy,
+  Prescriber,
+  PdmpCheck,
+} = require("./models");
 
 const app = express();
-
+const bcrypt = require("bcrypt");
 app.use(cors());
 app.use(express.json());
 
-async function getFullPrescription(prescriptionId) {
-  const result = await pool.query(
-    `SELECT p.*, 
-            m.name AS med_name, 
-            ph.name AS pharmacy_name, 
-            pr.name AS prescriber_name
-     FROM prescriptions p
-     JOIN medications m ON p.med_id = m.med_id
-     JOIN pharmacies ph ON p.pharmacy_id = ph.pharmacy_id
-     JOIN prescribers pr ON p.prescriber_id = pr.prescriber_id
-     WHERE p.prescription_id = $1`,
-    [prescriptionId],
-  );
-  return result.rows[0];
+const PRESCRIPTION_INCLUDE = [
+  { model: Medication, attributes: ["name"] },
+  { model: Pharmacy, attributes: ["name"] },
+  { model: Prescriber, attributes: ["name", "role"] },
+  { model: Patient, attributes: ["patient_id", "name", "dob"] },
+];
+
+function flattenPrescription(p) {
+  const obj = p.toJSON();
+  return {
+    ...obj,
+    med_name: obj.Medication?.name ?? null,
+    pharmacy_name: obj.Pharmacy?.name ?? null,
+    prescriber_id: obj.prescriber_id,
+    prescriber_name: obj.Prescriber?.name ?? null,
+    prescriber_role: obj.Prescriber?.role ?? null,
+    patient_name: obj.Patient?.name ?? null,
+    patient_id: obj.Patient?.patient_id ?? null,
+    Medication: undefined,
+    Pharmacy: undefined,
+    Prescriber: undefined,
+    Patient: undefined,
+  };
 }
 
-app.get("/api/patients", async (req, res) => {
+async function getFullPrescription(prescriptionId) {
+  const p = await Prescription.findByPk(prescriptionId, {
+    include: PRESCRIPTION_INCLUDE,
+  });
+  return p ? flattenPrescription(p) : null;
+}
+
+
+app.post("/api/login", async (req, res) => {
+  const { userId, password } = req.body;
   try {
-    const result = await pool.query("SELECT * FROM public.patients");
-    res.json(result.rows);
+    let user = await Patient.findByPk(userId);
+    let role = "patient";
+    if (!user) {
+      user = await Prescriber.findByPk(userId);
+      role = "doctor";
+    }
+    if (!user) return res.status(404).json({ error: "User not found" });
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) return res.status(401).json({ error: "Invalid credentials" });
+    const { password_hash, ...userWithoutHash } = user.toJSON();
+    res.json({ user: userWithoutHash, role });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/patients/:id", async (req, res) => {
+  try {
+    const patient = await Patient.findByPk(req.params.id);
+    if (!patient) return res.status(404).json({ error: "Patient not found" });
+    res.json(patient);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/patients/:id/pdmp", async (req, res) => {
+  try {
+    const record = await PdmpCheck.findOne({
+      where: { patient_id: req.params.id },
+      order: [["last_checked", "DESC"]],
+    });
+    res.json(record || null);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -35,23 +91,40 @@ app.get("/api/patients", async (req, res) => {
 
 app.get("/api/patients/:patientId/prescriptions", async (req, res) => {
   const { patientId } = req.params;
+  const { prescriber_id } = req.query;
+  const where = { patient_id: patientId };
+  if (prescriber_id) where.prescriber_id = prescriber_id;
+
   try {
-    const result = await pool.query(
-      `SELECT p.*, 
-              m.name AS med_name, 
-              ph.name AS pharmacy_name, 
-              pr.name AS prescriber_name,
-              pr.role AS prescriber_role
-       FROM prescriptions p
-       JOIN medications m ON p.med_id = m.med_id
-       JOIN pharmacies ph ON p.pharmacy_id = ph.pharmacy_id
-       JOIN prescribers pr ON p.prescriber_id = pr.prescriber_id
-       WHERE p.patient_id = $1
-       ORDER BY p.prescription_id DESC`,
-      [patientId],
-    );
-    res.json(result.rows);
+    const prescriptions = await Prescription.findAll({
+      where,
+      include: PRESCRIPTION_INCLUDE,
+      order: [["prescription_id", "DESC"]],
+    });
+    res.json(prescriptions.map(flattenPrescription));
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/prescribers/:prescriberId/patients", async (req, res) => {
+  const { prescriberId } = req.params;
+  try {
+    const patients = await Patient.findAll({
+      include: [{
+        model: Prescription,
+        where: { prescriber_id: prescriberId },
+        required: true,              
+        attributes: []               
+      }],
+      attributes: ["patient_id", "name", "dob", "insurance"],
+      group: ["Patient.patient_id", "Patient.name", "Patient.dob", "Patient.insurance"],
+      subQuery: false ,
+      order: [["patient_id", "ASC"]]               
+    })
+    res.json(patients);
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -60,53 +133,39 @@ app.post("/api/prescriptions", async (req, res) => {
   const {
     patient_id,
     med_name,
-    prescriber_id,
-    pharmacy_id,
+    prescriber_id = null,
+    pharmacy_id = null,
     dosage,
     form,
     instructions,
     status,
     status_label,
     patient_note,
+    external_prescriber = null,
   } = req.body;
 
   try {
-    let medId = await pool.query(
-      `SELECT med_id FROM medications WHERE name = $1`,
-      [med_name],
-    );
-    if (medId.rows.length === 0) {
-      const newMed = await pool.query(
-        `INSERT INTO medications (name) VALUES ($1) RETURNING med_id`,
-        [med_name],
-      );
-      medId = newMed.rows[0].med_id;
-    } else {
-      medId = medId.rows[0].med_id;
-    }
+    const [medication] = await Medication.findOrCreate({
+      where: { name: med_name },
+      defaults: { name: med_name },
+    });
 
-    const insertResult = await pool.query(
-      `INSERT INTO prescriptions 
-       (patient_id, med_id, prescriber_id, pharmacy_id, dosage, form, instructions, status, status_label, patient_note)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       RETURNING prescription_id`,
-      [
-        patient_id,
-        medId,
-        prescriber_id,
-        pharmacy_id,
-        dosage,
-        form,
-        instructions,
-        status,
-        status_label,
-        patient_note,
-      ],
-    );
+    const prescription = await Prescription.create({
+      patient_id,
+      med_id: medication.med_id,
+      prescriber_id,
+      pharmacy_id,
+      dosage,
+      form,
+      instructions,
+      status,
+      status_label,
+      patient_note,
+      external_prescriber,
+    });
 
-    const newPrescriptionId = insertResult.rows[0].prescription_id;
-    const fullPrescription = await getFullPrescription(newPrescriptionId);
-    res.status(201).json(fullPrescription);
+    const full = await getFullPrescription(prescription.prescription_id);
+    res.status(201).json(full);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
@@ -115,83 +174,97 @@ app.post("/api/prescriptions", async (req, res) => {
 
 app.put("/api/prescriptions/:id", async (req, res) => {
   const { id } = req.params;
-  const allowedFields = [
-    "dosage",
-    "form",
-    "instructions",
-    "patient_note",
-    "pharmacy_id",
-    "med_id",
-    "status",
-  ];
-  const updates = {};
-  allowedFields.forEach((field) => {  
-    if (req.body[field] !== undefined && req.body[field] !== "") {
-      updates[field] = req.body[field];
-    }
-  });
+  const role = req.headers["x-user-role"];    
+  const userId = req.headers["x-user-id"];
 
   try {
-    const keys = Object.keys(updates);
-    const values = Object.values(updates);
+    const prescription = await Prescription.findByPk(id);
+    if (!prescription) return res.status(404).json({ error: "Not found" });
 
-    const setClause = keys.map((key, i) => `${key} = $${i + 1}`).join(", ");
+    if (role === "patient") {
+      return res
+        .status(403)
+        .json({ error: "Patients cannot edit prescriptions" });
+    }
+    if (
+      role === "doctor" &&
+      String(prescription.prescriber_id) !== String(userId)
+    ) {
+      return res
+        .status(403)
+        .json({ error: "You can only edit your own prescriptions" });
+    }
 
-    const query = `UPDATE prescriptions SET ${setClause} WHERE prescription_id = $${keys.length + 1} RETURNING *`;
+    const data = req.body.updates || req.body;
+    const allowedFields = [
+      "dosage",
+      "form",
+      "instructions",
+      "patient_note",
+      "pharmacy_id",
+      "med_id",
+      "status",
+      "external_prescriber",
+    ];
+    const updates = {};
+    allowedFields.forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(data, field))
+        updates[field] = data[field];
+    });
 
-    const result = await pool.query(query, [...values, id]);
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: "No valid fields to update" });
+    }
 
-    const fullPrescription = await getFullPrescription(id);
-    res.json(fullPrescription);
+    await Prescription.update(updates, { where: { prescription_id: id } });
+    const full = await getFullPrescription(id);
+    res.json(full);
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
+
 app.patch("/api/prescriptions/:id/discontinue", async (req, res) => {
-  const { id } = req.params;
   const { reason } = req.body;
   try {
-    await pool.query(
-      `UPDATE prescriptions 
-       SET status = 'discontinued',
-           discontinued_on = CURRENT_DATE,
-           discontinue_reason = $1
-       WHERE prescription_id = $2`,
-      [reason, id],
-    );
-    const fullPrescription = await getFullPrescription(id);
-    res.json(fullPrescription);
+    const prescription = await Prescription.findByPk(req.params.id);
+    if (!prescription) return res.status(404).json({ error: "Not found" });
+
+    await prescription.update({
+      status: "discontinued",
+      discontinued_on: new Date(),
+      discontinue_reason: reason,
+    });
+    res.json(await getFullPrescription(req.params.id));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 app.patch("/api/prescriptions/:id/recontinue", async (req, res) => {
-  const { id } = req.params;
   try {
-    await pool.query(
-      `UPDATE prescriptions 
-       SET status = 'success',
-           discontinued_on = NULL,
-           discontinue_reason = NULL
-       WHERE prescription_id = $1`,
-      [id],
-    );
-    const fullPrescription = await getFullPrescription(id);
-    res.json(fullPrescription);
+    const prescription = await Prescription.findByPk(req.params.id);
+    if (!prescription) return res.status(404).json({ error: "Not found" });
+
+    await prescription.update({
+      status: "success",
+      discontinued_on: null,
+      discontinue_reason: null,
+    });
+    res.json(await getFullPrescription(req.params.id));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ==================== MASTER DATA ROUTES ====================
-
 app.get("/api/medications", async (req, res) => {
   try {
-    const result = await pool.query(
-      "SELECT med_id, name FROM medications ORDER BY name",
-    );
-    res.json(result.rows);
+    const meds = await Medication.findAll({
+      attributes: ["med_id", "name"],
+      order: [["name", "ASC"]],
+    });
+    res.json(meds);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -199,59 +272,26 @@ app.get("/api/medications", async (req, res) => {
 
 app.get("/api/pharmacies", async (req, res) => {
   const { zip } = req.query;
-  if (!zip) return res.status(400).json({ error: "Zip code required" });
+  if (!zip) return res.status(400).json({ error: "Zip required" });
   try {
-    const result = await pool.query(
-      "SELECT pharmacy_id as id, name, address, zipcode, phone, hours FROM pharmacies WHERE zipcode = $1",
-      [zip],
-    );
-    res.json(result.rows);
+    const pharmacies = await Pharmacy.findAll({
+      attributes: [
+        "pharmacy_id",
+        "name",
+        "address",
+        "zipcode",
+        "phone",
+        "hours",
+      ],
+      where: { zipcode: zip },
+    });
+    res.json(pharmacies.map((p) => ({ ...p.toJSON(), id: p.pharmacy_id })));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.get("/api/patients/:id", async (req, res) => {
-  const { id } = req.params;
-  try {
-    const result = await pool.query(
-      "SELECT * FROM patients WHERE patient_id = $1",
-      [id],
-    );
-    if (result.rows.length === 0)
-      return res.status(404).json({ error: "Patient not found" });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get("/api/patients/:id/pdmp", async (req, res) => {
-  const { id } = req.params;
-  try {
-    const result = await pool.query(
-      "SELECT * FROM pdmp_checks WHERE patient_id = $1 ORDER BY last_checked DESC LIMIT 1",
-      [id],
-    );
-    res.json(result.rows[0] || null);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get("/api/prescribers", async (req, res) => {
-  try {
-    const result = await pool.query(
-      "SELECT prescriber_id, name, role FROM prescribers",
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ==================== START SERVER ====================
 const PORT = 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+app.listen(PORT, () =>
+  console.log(`Server running on http://localhost:${PORT}`),
+);
