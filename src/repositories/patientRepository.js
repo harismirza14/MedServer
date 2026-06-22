@@ -1,67 +1,104 @@
-const { Patient, Prescription } = require('../models');
+const {
+  Patient,
+  Prescription,
+  User,
+  CareTeam,
+  CareTeamMember,
+  sequelize,
+} = require("../models");
+const { Op } = require("sequelize");
 
-/**
- * Find a patient by primary key (patient_id)
- * @param {string} patientId - The patient ID (e.g., 'P001')
- * @returns {Promise<Model|null>} - Patient instance or null
- */
 async function findById(patientId) {
-  return await Patient.findByPk(patientId);
-}
-
-/**
- * Find all patients that a given prescriber has prescribed to
- * (distinct patients with at least one prescription from that prescriber)
- * @param {number|string} prescriberId - The prescriber ID
- * @returns {Promise<Array>} - Array of Patient instances (selected fields)
- */
-async function findByPrescriberId(prescriberId) {
-  return await Patient.findAll({
-    include: [{
-      model: Prescription,
-      where: { prescriber_id: prescriberId },
-      required: true,
-      attributes: [],
-    }],
-    attributes: ['patient_id', 'name', 'dob', 'insurance'],
-    group: ['Patient.patient_id', 'Patient.name', 'Patient.dob', 'Patient.insurance'],
-    subQuery: false,
-    order: [['patient_id', 'ASC']],
+  return await Patient.findByPk(patientId, {
+    include: [{ model: User, attributes: { exclude: ["password_hash"] } }],
   });
 }
 
-/**
- * Create a new patient (if needed in future)
- * @param {Object} data - Patient data
- * @returns {Promise<Model>}
- */
-async function createPatient(data) {
-  return await Patient.create(data);
+async function findByPrescriberId(prescriberId) {
+  const careTeamMembers = await CareTeamMember.findAll({
+    where: { prescriber_id: prescriberId },
+    include: [
+      {
+        model: CareTeam,
+        attributes: ["patient_id"],
+      },
+    ],
+    attributes: [],
+  });
+
+  const careTeamPatientIds = careTeamMembers
+    .map((m) => m.CareTeam?.patient_id)
+    .filter((id) => id !== undefined && id !== null);
+    
+  const prescriptionPatients = await Prescription.findAll({
+    where: { prescriber_id: prescriberId },
+    attributes: ["patient_id"],
+    group: ["patient_id"],
+  });
+  const prescriptionPatientIds = prescriptionPatients.map((p) => p.patient_id);
+  const allPatientIds = [
+    ...new Set([...careTeamPatientIds, ...prescriptionPatientIds]),
+  ];
+
+  if (allPatientIds.length === 0) {
+    return [];
+  }
+  const patients = await Patient.findAll({
+    where: { patient_id: allPatientIds },
+    include: [
+      {
+        model: User,
+        attributes: { exclude: ["password_hash"] },
+      },
+    ],
+    order: [
+      [
+        sequelize.literal(
+          'CAST(SUBSTRING("Patient"."patient_id", 2) AS INTEGER)',
+        ),
+        "ASC",
+      ],
+    ],
+  });
+
+  return patients.map((p) => {
+    const { User, ...patientData } = p.toJSON();
+    return { ...User, ...patientData };
+  });
 }
 
-/**
- * Update a patient (if needed)
- * @param {string} patientId - Patient ID
- * @param {Object} updates - Fields to update
- * @returns {Promise<Array>} - Number of affected rows
- */
+async function createPatient(data, options = {}) {
+  return await Patient.create(data, options);
+}
+
 async function updatePatient(patientId, updates) {
   return await Patient.update(updates, { where: { patient_id: patientId } });
 }
 
-/**
- * Delete a patient (use with caution)
- * @param {string} patientId - Patient ID
- * @returns {Promise<number>} - Number of deleted rows
- */
+async function findLastPatientId() {
+  return await Patient.findOne({
+    where: { patient_id: { [Op.like]: "P%" } },
+    order: [
+      [sequelize.literal('CAST(SUBSTRING(patient_id, 2) AS INTEGER)'), 'DESC'],
+    ],
+    attributes: ["patient_id"],
+  });
+}
+
 async function deletePatient(patientId) {
   return await Patient.destroy({ where: { patient_id: patientId } });
 }
 
+async function findByUserId(userId) {
+  return await Patient.findOne({ where: { user_id: userId } });
+}
+
 module.exports = {
   findById,
+  findByUserId,
   findByPrescriberId,
   createPatient,
   updatePatient,
   deletePatient,
+  findLastPatientId,
 };

@@ -3,23 +3,19 @@ module.exports = (sequelize, DataTypes) => {
     "Patient",
     {
       patient_id: { type: DataTypes.STRING(20), primaryKey: true },
-      name: DataTypes.STRING,
-      dob: DataTypes.DATEONLY,
-      address: DataTypes.TEXT,
-      visit_frequency: DataTypes.STRING,
-      next_appointment: DataTypes.DATE,
+      user_id: { type: DataTypes.INTEGER, allowNull: false, unique: true },
       insurance: DataTypes.STRING,
-      password_hash: {
-        type: DataTypes.STRING(255),
-        allowNull: true,
-      },
+      zipcode: DataTypes.STRING(10),
     },
     { tableName: "patients", timestamps: false },
   );
 
   Patient.associate = (models) => {
+    Patient.belongsTo(models.User, { foreignKey: "user_id" });
+    Patient.belongsTo(models.Prescriber, { foreignKey: "prescriber_id" });
     Patient.hasMany(models.Prescription, { foreignKey: "patient_id" });
-    Patient.hasMany(models.PdmpCheck, { foreignKey: "patient_id" });
+    Patient.hasOne(models.CareTeam, { foreignKey: "patient_id" });
   };
+
   return Patient;
 };

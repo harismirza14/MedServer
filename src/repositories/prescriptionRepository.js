@@ -1,10 +1,25 @@
-const { Prescription, Medication, Pharmacy, Prescriber, Patient } = require('../models');
+const {
+  Prescription,
+  Medication,
+  Pharmacy,
+  Prescriber,
+  Patient,
+  User,
+} = require("../models");
 
 const PRESCRIPTION_INCLUDE = [
   { model: Medication, attributes: ["name"] },
   { model: Pharmacy, attributes: ["name", "zipcode"] },
-  { model: Prescriber, attributes: ["name", "role"] },
-  { model: Patient, attributes: ["patient_id", "name", "dob"] },
+  {
+    model: Prescriber,
+    include: [{ model: User, attributes: ["name", "role"] }],
+    attributes: ["prescriber_id"],
+  },
+  {
+  model: Patient,
+  attributes: ["patient_id"],
+  include: [{ model: User, attributes: ["name", "dob"] }],
+},
 ];
 
 async function findAllByPatient(patientId, prescriberId = null) {

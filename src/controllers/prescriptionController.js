@@ -2,13 +2,12 @@ const flattenPrescription = require('../utils/flattenPrescription');
 const prescriptionRepo = require('../repositories/prescriptionRepository');
 const medicationRepo = require('../repositories/medicationRepository');
 
-// No need for patientRepo here now
 
 async function getPrescriptionsByPatient(req, res) {
   const { patientId } = req.params;
   const { prescriber_id } = req.query;
   try {
-    const prescriptions = await prescriptionRepo.findAllByPatient(patientId, prescriber_id);
+    const prescriptions = await prescriptionRepo.findAllByPatient(patientId, prescriber_id) || [];
     res.json(prescriptions.map(flattenPrescription));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -55,8 +54,7 @@ async function createPrescription(req, res) {
 
 async function updatePrescription(req, res) {
   const { id } = req.params;
-  const role = req.headers["x-user-role"];
-  const userId = req.headers["x-user-id"];
+  const { userId, role, roleSpecificId } = req.user; 
 
   try {
     const existing = await prescriptionRepo.findById(id);
@@ -65,7 +63,7 @@ async function updatePrescription(req, res) {
     if (role === "patient") {
       return res.status(403).json({ error: "Patients cannot edit prescriptions" });
     }
-    if (role === "doctor" && String(existing.prescriber_id) !== String(userId)) {
+    if (role === "doctor" && String(existing.prescriber_id) !== String(roleSpecificId)) {
       return res.status(403).json({ error: "You can only edit your own prescriptions" });
     }
 

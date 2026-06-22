@@ -1,45 +1,36 @@
-const { Prescriber } = require('../models');
+const { Prescriber, User } = require("../models");
 
-/**
- * Find a prescriber by primary key
- * @param {number|string} id - Prescriber ID
- * @returns {Promise<Model|null>}
- */
-async function findById(id) {
-  return await Prescriber.findByPk(id);
-}
-
-/**
- * Find all prescribers (select fields)
- * @returns {Promise<Array>}
- */
-async function findAll() {
-  return await Prescriber.findAll({
-    attributes: ['prescriber_id', 'name', 'role'],
+async function findById(prescriberId) {
+  return await Prescriber.findByPk(prescriberId, {
+    include: [{ model: User, attributes: { exclude: ["password_hash"] } }],
   });
 }
 
-/**
- * Create a new prescriber
- * @param {Object} data
- * @returns {Promise<Model>}
- */
+async function findAll() {
+  const prescribers = await Prescriber.findAll({
+    include: [{ model: User, attributes: { exclude: ["password_hash"] } }],
+    attributes: ["prescriber_id", "specialty", "pmdc_number", "education"],
+  });
+
+  return prescribers.map((p) => {
+    const { User, ...prescriberData } = p.toJSON();
+    return { ...User, ...prescriberData };
+  });
+}
+
 async function createPrescriber(data) {
   return await Prescriber.create(data);
 }
 
-/**
- * Update a prescriber
- * @param {number} id
- * @param {Object} updates
- * @returns {Promise<Array>}
- */
 async function updatePrescriber(id, updates) {
   return await Prescriber.update(updates, { where: { prescriber_id: id } });
 }
-
+async function findByUserId(userId) {
+  return await Prescriber.findOne({ where: { user_id: userId } });
+}
 module.exports = {
   findById,
+  findByUserId,
   findAll,
   createPrescriber,
   updatePrescriber,
