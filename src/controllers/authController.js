@@ -3,6 +3,7 @@ const jwt = require("jsonwebtoken");
 const userRepo = require("../repositories/userRepository");
 const patientRepo = require("../repositories/patientRepository");
 const prescriberRepo = require("../repositories/prescriberRepository");
+
 async function login(req, res) {
   const { userId, password } = req.body;
   try {
@@ -35,8 +36,11 @@ async function login(req, res) {
       expiresIn: "8h",
     });
     const { password_hash, ...userWithoutHash } = user.toJSON();
-    const userResponse = { ...userWithoutHash, roleSpecificId };
-    res.json({ user: userResponse, role: user.role, token });
+    res.json({
+      user: { ...userWithoutHash, roleSpecificId },
+      role: user.role,
+      token,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

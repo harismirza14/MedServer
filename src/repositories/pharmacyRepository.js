@@ -2,7 +2,7 @@ const { Pharmacy } = require('../models');
 
 /**
  * Find pharmacies by zip code, returning selected fields and adding an 'id' alias
- * @param {string} zip - Zip code
+ * @param {string} zip 
  * @returns {Promise<Array>}
  */
 async function findByZip(zip) {
@@ -10,7 +10,7 @@ async function findByZip(zip) {
     attributes: ['pharmacy_id', 'name', 'address', 'zipcode', 'phone', 'hours'],
     where: { zipcode: zip },
   });
-  // Map to add 'id' field (alias for pharmacy_id) as used in frontend
+
   return pharmacies.map(p => ({ ...p.toJSON(), id: p.pharmacy_id }));
 }
 

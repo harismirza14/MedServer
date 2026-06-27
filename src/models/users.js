@@ -11,7 +11,7 @@ module.exports = (sequelize, DataTypes) => {
       password_hash: { type: DataTypes.STRING(255), allowNull: false },
       name: { type: DataTypes.STRING, allowNull: false },
       phone_number: { type: DataTypes.STRING(20), allowNull: true },
-      role: { type: DataTypes.ENUM("patient", "doctor"), allowNull: false },
+      role: { type: DataTypes.ENUM("patient", "doctor", "admin"), allowNull: false },
       dob: DataTypes.DATEONLY,
       address: DataTypes.TEXT,
       gender: DataTypes.STRING(10),

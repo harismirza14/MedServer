@@ -46,8 +46,9 @@ async function getPdmpByPatientId(req, res) {
 
 async function getDoctorPatients(req, res) {
   const { prescriberId } = req.params;
+  const { search, gender } = req.query;
   try {
-    const patients = await patientRepo.findByPrescriberId(prescriberId);
+    const patients = await patientRepo.findByPrescriberId(prescriberId, { search, gender });
     res.json(patients);
   } catch (err) {
     console.error(err);

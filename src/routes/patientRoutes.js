@@ -1,6 +1,6 @@
 const express = require('express');
-const { getPatientById, getPdmpByPatientId, getDoctorPatients, createPatient } = require('../controllers/patientController');
 const router = express.Router();
+const { getPatientById, getPdmpByPatientId, getDoctorPatients, createPatient } = require('../controllers/patientController');
 
 router.get('/patients/:id', getPatientById);
 router.get('/patients/:id/pdmp', getPdmpByPatientId);

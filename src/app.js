@@ -6,6 +6,8 @@ const authRoutes = require("./routes/authRoutes");
 const patientRoutes = require("./routes/patientRoutes");
 const prescriptionRoutes = require("./routes/prescriptionRoutes");
 const masterDataRoutes = require("./routes/masterDataRoutes");
+const prescriberRoutes = require("./routes/prescriberRoutes");
+const careTeamRoutes = require("./routes/careTeamRoutes");
 const authenticate = require("./middlewares/auth");
 const app = express();
 
@@ -16,5 +18,7 @@ app.use(authenticate);
 app.use("/api", patientRoutes);
 app.use("/api", prescriptionRoutes);
 app.use("/api", masterDataRoutes);
+app.use("/api", prescriberRoutes);
+app.use("/api", careTeamRoutes);
 
 module.exports = app;
