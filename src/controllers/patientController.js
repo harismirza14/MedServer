@@ -10,6 +10,7 @@ const {
 } = require("../models");
 const bcrypt = require("bcrypt");
 const { sendTemporaryPassword } = require("../utils/email");
+const { get } = require("../routes/careTeamRoutes");
 
 async function getPatientById(req, res) {
   try {
@@ -46,10 +47,10 @@ async function getPdmpByPatientId(req, res) {
 
 async function getDoctorPatients(req, res) {
   const { prescriberId } = req.params;
-  const { search, gender } = req.query;
+  const { search, gender, page, limit } = req.query;
   try {
-    const patients = await patientRepo.findByPrescriberId(prescriberId, { search, gender });
-    res.json(patients);
+    const result = await patientRepo.findByPrescriberId(prescriberId, { search, gender, page, limit });
+    res.json(result);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
@@ -180,16 +181,125 @@ async function createPatient(req, res) {
   }
 }
 
-module.exports = {
-  getPatientById,
-  getPdmpByPatientId,
-  getDoctorPatients,
-  createPatient,
-};
+async function updatePatient(req, res) {
+  try {
+    const patient = await patientRepo.findById(req.params.id);
+    if (!patient) return res.status(404).json({ error: "Patient not found." });
+
+    const { role, userId, roleSpecificId } = req.user;
+
+    let authorized = false;
+    if (role === "admin") {
+      authorized = true;
+    } else if (role === "patient") {
+      authorized = userId === patient.user_id;
+    } else if (role === "doctor") {
+      authorized = await patientRepo.isPatientOfPrescriber(roleSpecificId, req.params.id);
+    }
+
+    if (!authorized) {
+      return res.status(403).json({ error: "You are not authorized to update this patient." });
+    }
+
+    const { name, email, phone_number, gender, dob, address, insurance, zipcode } = req.body;
+
+    if (email && email !== patient.User.email) {
+      const existing = await userRepo.findByEmail(email);
+      if (existing) {
+        return res.status(409).json({ error: "Email already registered." });
+      }
+    }
+
+    await patient.User.update({
+      ...(name !== undefined && { name }),
+      ...(email !== undefined && { email }),
+      ...(phone_number !== undefined && { phone_number }),
+      ...(gender !== undefined && { gender }),
+      ...(dob !== undefined && { dob }),
+      ...(address !== undefined && { address }),
+    });
+
+    await patientRepo.updatePatient(req.params.id, {
+      ...(insurance !== undefined && { insurance }),
+      ...(zipcode !== undefined && { zipcode }),
+    });
+
+    const updated = await patientRepo.findById(req.params.id);
+    const data = updated.toJSON();
+    const userData = data.User;
+    delete data.User;
+    delete data.user_id;
+    const combined = { ...userData, ...data };
+    delete combined.password_hash;
+
+    res.json(combined);
+  } catch (err) {
+    console.error("Error in updatePatient:", err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function deletePatient(req, res) {
+  const t = await sequelize.transaction();
+  try {
+    const patient = await patientRepo.findById(req.params.id);
+    if (!patient) {
+      await t.rollback();
+      return res.status(404).json({ error: "Patient not found." });
+    }
+
+    const { role, roleSpecificId } = req.user;
+    if (role === "doctor") {
+      const authorized = await patientRepo.isPatientOfPrescriber(roleSpecificId, req.params.id);
+      if (!authorized) {
+        await t.rollback();
+        return res.status(403).json({ error: "You do not have a care relationship with this patient." });
+      }
+    }
+
+    const prescriptionCount = await Prescription.count({
+      where: { patient_id: req.params.id },
+    });
+    if (prescriptionCount > 0) {
+      await t.rollback();
+      return res.status(409).json({
+        error: "Cannot delete a patient with existing prescriptions. Medical records must be retained.",
+      });
+    }
+
+    const careTeam = await CareTeam.findOne({ where: { patient_id: req.params.id } });
+    if (careTeam) {
+      await CareTeamMember.destroy({ where: { care_team_id: careTeam.care_team_id }, transaction: t });
+      await careTeam.destroy({ transaction: t });
+    }
+
+    await userRepo.deleteUser(patient.user_id, { transaction: t });
+
+    await t.commit();
+    res.json({ message: "Patient deleted successfully." });
+  } catch (err) {
+    await t.rollback();
+    console.error("Error in deletePatient:", err);
+    res.status(500).json({ error: err.message });
+  }
+}
+async function getCareTeam(req, res) {
+  try {
+    const { patientId } = req.params;
+    const careTeam = await patientRepo.getCareTeamByPatientId(patientId);
+    res.json(careTeam);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+}
 
 module.exports = {
   getPatientById,
   getPdmpByPatientId,
   getDoctorPatients,
   createPatient,
+  updatePatient,
+  deletePatient,
+  getCareTeam,
 };

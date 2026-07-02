@@ -1,30 +1,60 @@
-const { Prescriber, User, sequelize } = require("../models");
+const { Prescriber, User } = require("../models");
+const { Op } = require("sequelize");
 
 async function findById(prescriberId) {
   return await Prescriber.findByPk(prescriberId, {
     include: [{ model: User, attributes: { exclude: ["password_hash"] } }],
   });
 }
-async function findAll() {
-  const prescribers = await Prescriber.findAll({
-    include: [{ model: User, attributes: { exclude: ['password_hash'] } }],
-    attributes: ['prescriber_id', 'specialty', 'pmdc_number', 'education'],
-    order: [['prescriber_id', 'ASC']],
+
+async function findAllPaginated(filters = {}) {
+  const { search = "", gender = "", page = 1, limit = 10 } = filters;
+
+  const userWhere = { role: "doctor" };
+
+  if (gender && gender !== "all") {
+    userWhere.gender = { [Op.iLike]: gender }; // no wildcards = case-insensitive exact match
+  }
+
+  if (search && search.trim()) {
+    const term = `%${search.trim()}%`;
+    userWhere[Op.or] = [
+      { name: { [Op.iLike]: term } },
+      { email: { [Op.iLike]: term } },
+    ];
+  }
+
+  const offset = (Number(page) - 1) * Number(limit);
+
+  const { rows, count } = await Prescriber.findAndCountAll({
+    include: [
+      {
+        model: User,
+        attributes: { exclude: ["password_hash"] },
+        where: userWhere,
+      },
+    ],
+    attributes: ["prescriber_id", "specialty", "pmdc_number", "education"],
+    limit: Number(limit),
+    offset,
+    order: [["prescriber_id", "ASC"]],
   });
 
-  const seen = new Map();
-  return prescribers.filter(p => {
-    const email = p.User.email.toLowerCase();
-    if (seen.has(email)) return false;
-    seen.set(email, true);
-    return true;
-  }).map(p => {
+  const data = rows.map((p) => {
     const { User, ...prescriberData } = p.toJSON();
     return { ...User, ...prescriberData };
   });
+
+  return {
+    data,
+    total: count,
+    page: Number(page),
+    totalPages: Math.max(1, Math.ceil(count / Number(limit))),
+  };
 }
 
-async function createPrescriber(data, options) {
+
+async function createPrescriber(data, options = {}) {
   return await Prescriber.create(data, options);
 }
 
@@ -39,7 +69,8 @@ async function findByUserId(userId) {
 module.exports = {
   findById,
   findByUserId,
-  findAll,
+  findAllPaginated,
   createPrescriber,
   updatePrescriber,
+
 };

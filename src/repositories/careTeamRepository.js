@@ -41,4 +41,39 @@ async function findByPatientId(patientId) {
   };
 }
 
-module.exports = { findByPatientId };
+async function addMember(patientId, prescriberId, role) {
+  let careTeam = await CareTeam.findOne({ where: { patient_id: patientId } });
+  if (!careTeam) {
+    careTeam = await CareTeam.create({ patient_id: patientId });
+  }
+
+  const existing = await CareTeamMember.findOne({
+    where: { care_team_id: careTeam.care_team_id, prescriber_id: prescriberId },
+  });
+  if (existing) {
+    return { alreadyMember: true, member: existing };
+  }
+
+  const member = await CareTeamMember.create({
+    care_team_id: careTeam.care_team_id,
+    prescriber_id: prescriberId,
+    role: role || "Consultant",
+  });
+
+  return { alreadyMember: false, member };
+}
+
+async function removeMember(patientId, memberId) {
+  const careTeam = await CareTeam.findOne({ where: { patient_id: patientId } });
+  if (!careTeam) return null;
+
+  const member = await CareTeamMember.findOne({
+    where: { member_id: memberId, care_team_id: careTeam.care_team_id },
+  });
+  if (!member) return null;
+
+  await member.destroy();
+  return member;
+}
+
+module.exports = { findByPatientId, addMember, removeMember };

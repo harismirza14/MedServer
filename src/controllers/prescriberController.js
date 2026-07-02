@@ -1,6 +1,6 @@
 const userRepo = require("../repositories/userRepository");
 const prescriberRepo = require("../repositories/prescriberRepository");
-const { sequelize } = require("../models");
+const { sequelize, Prescription, CareTeamMember } = require("../models");
 const bcrypt = require("bcrypt");
 const { sendTemporaryPassword } = require("../utils/email");
 
@@ -86,15 +86,6 @@ async function createPrescriber(req, res) {
   }
 }
 
-async function getAllPrescribers(req, res) {
-  try {
-    const prescribers = await prescriberRepo.findAll();
-    res.json(prescribers);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
-}
 async function getPrescriberById(req, res) {
   try {
     const prescriber = await prescriberRepo.findById(req.params.id);
@@ -121,6 +112,108 @@ async function getPrescriberById(req, res) {
   }
 }
 
+async function getAllPrescribers(req, res) {
+  try {
+    const { search, gender, page, limit } = req.query;
+    const result = await prescriberRepo.findAllPaginated({ search, gender, page, limit });
+    res.json(result);
+  } catch (err) {
+    console.error("Error in getAllPrescribers:", err);
+    res.status(500).json({ error: err.message });
+  }
+}
 
+async function updatePrescriber(req, res) {
+  try {
+    const prescriber = await prescriberRepo.findById(req.params.id);
+    if (!prescriber) return res.status(404).json({ error: "Doctor not found." });
 
-module.exports = { createPrescriber, getAllPrescribers, getPrescriberById };
+    const { role, userId } = req.user;
+
+    let authorized = false;
+    if (role === "admin") {
+      authorized = true;
+    } else if (role === "doctor") {
+      authorized = userId === prescriber.user_id;
+    }
+    // role === "patient" (or anything else) stays unauthorized by default
+
+    if (!authorized) {
+      return res.status(403).json({ error: "You are not authorized to update this doctor." });
+    }
+
+    const { name, email, phone_number, gender, dob, address, specialty, pmdc_number, education } = req.body;
+
+    if (email && email !== prescriber.User.email) {
+      const existing = await userRepo.findByEmail(email);
+      if (existing) {
+        return res.status(409).json({ error: "Email already registered." });
+      }
+    }
+
+    await prescriber.User.update({
+      ...(name !== undefined && { name }),
+      ...(email !== undefined && { email }),
+      ...(phone_number !== undefined && { phone_number }),
+      ...(gender !== undefined && { gender }),
+      ...(dob !== undefined && { dob }),
+      ...(address !== undefined && { address }),
+    });
+
+    await prescriberRepo.updatePrescriber(req.params.id, {
+      ...(specialty !== undefined && { specialty }),
+      ...(pmdc_number !== undefined && { pmdc_number }),
+      ...(education !== undefined && { education }),
+    });
+
+    const updated = await prescriberRepo.findById(req.params.id);
+    const data = updated.toJSON();
+    const userData = data.User;
+    delete data.User;
+    delete data.user_id;
+    const combined = { ...userData, ...data };
+    delete combined.password_hash;
+
+    res.json(combined);
+  } catch (err) {
+    console.error("Error in updatePrescriber:", err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+async function deletePrescriber(req, res) {
+  const t = await sequelize.transaction();
+  try {
+    const prescriber = await prescriberRepo.findById(req.params.id);
+    if (!prescriber) {
+      await t.rollback();
+      return res.status(404).json({ error: "Doctor not found." });
+    }
+
+    const prescriptionCount = await Prescription.count({
+      where: { prescriber_id: req.params.id },
+    });
+    if (prescriptionCount > 0) {
+      await t.rollback();
+      return res.status(409).json({
+        error: "Cannot delete a doctor with existing prescriptions. Consider deactivating instead.",
+      });
+    }
+
+    await CareTeamMember.destroy({
+      where: { prescriber_id: req.params.id },
+      transaction: t,
+    });
+
+    await userRepo.deleteUser(prescriber.user_id, { transaction: t });
+
+    await t.commit();
+    res.json({ message: "Doctor deleted successfully." });
+  } catch (err) {
+    await t.rollback();
+    console.error("Error in deletePrescriber:", err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+module.exports = { createPrescriber, getPrescriberById, getAllPrescribers, updatePrescriber, deletePrescriber };

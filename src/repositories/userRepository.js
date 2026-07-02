@@ -14,4 +14,8 @@ async function createUser(data, options = {}) {
   return await User.create(data, options);
 }
 
-module.exports = { findByEmail, findById, createUser };
+async function deleteUser(userId, options = {}) {
+  return await User.destroy({ where: { user_id: userId }, ...options });
+}
+
+module.exports = { findByEmail, findById, createUser, deleteUser };
