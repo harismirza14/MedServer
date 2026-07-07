@@ -127,9 +127,6 @@ async function findLastPatientId() {
   });
 }
 
-// NOTE: no longer called by the new delete flow (see patientController.deletePatient),
-// which deletes the User row instead and relies on the existing FK CASCADE to remove
-// this Patient row automatically. Left here in case anything else references it.
 async function deletePatient(patientId) {
   return await Patient.destroy({ where: { patient_id: patientId } });
 }

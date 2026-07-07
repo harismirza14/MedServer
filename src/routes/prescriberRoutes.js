@@ -9,7 +9,7 @@ const {
 } = require('../controllers/prescriberController');
 const authorizeRoles = require('../middlewares/authorizeRoles');
 
-router.get('/prescribers', authorizeRoles('admin'), getAllPrescribers);
+router.get('/prescribers', authorizeRoles('admin', 'doctor'), getAllPrescribers);
 router.get('/prescribers/:id', getPrescriberById);
 router.post('/prescribers', authorizeRoles('admin'), createPrescriber);
 router.put('/prescribers/:id', updatePrescriber);

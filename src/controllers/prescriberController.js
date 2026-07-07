@@ -136,7 +136,6 @@ async function updatePrescriber(req, res) {
     } else if (role === "doctor") {
       authorized = userId === prescriber.user_id;
     }
-    // role === "patient" (or anything else) stays unauthorized by default
 
     if (!authorized) {
       return res.status(403).json({ error: "You are not authorized to update this doctor." });

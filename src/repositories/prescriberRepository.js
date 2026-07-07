@@ -13,7 +13,7 @@ async function findAllPaginated(filters = {}) {
   const userWhere = { role: "doctor" };
 
   if (gender && gender !== "all") {
-    userWhere.gender = { [Op.iLike]: gender }; // no wildcards = case-insensitive exact match
+    userWhere.gender = { [Op.iLike]: gender }; 
   }
 
   if (search && search.trim()) {
