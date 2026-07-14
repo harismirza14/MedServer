@@ -72,5 +72,4 @@ module.exports = {
   findAllPaginated,
   createPrescriber,
   updatePrescriber,
-
 };

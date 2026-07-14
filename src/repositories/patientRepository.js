@@ -134,34 +134,94 @@ async function deletePatient(patientId) {
 async function findByUserId(userId) {
   return await Patient.findOne({ where: { user_id: userId } });
 }
+
 async function getCareTeamByPatientId(patientId) {
+  // 1. Fetch care team members from care_team_members (existing logic)
   const careTeam = await CareTeam.findOne({
     where: { patient_id: patientId },
-    include: [{
-      model: CareTeamMember,
-      include: [{
-        model: Prescriber,
-        include: [{
-          model: User,
-          attributes: { exclude: ['password_hash'] }
-        }]
-      }]
-    }]
+    include: [
+      {
+        model: CareTeamMember,
+        include: [
+          {
+            model: Prescriber,
+            include: [
+              {
+                model: User,
+                attributes: { exclude: ["password_hash"] },
+              },
+            ],
+          },
+        ],
+      },
+    ],
   });
 
-  if (!careTeam) return { members: [] };
+  const careTeamMembers = careTeam?.CareTeamMembers || [];
+  const careTeamMap = new Map();
+  const members = [];
 
-  const members = careTeam.CareTeamMembers.map(member => ({
-    member_id: member.member_id,
-    prescriber_id: member.prescriber_id,
-    role: member.role,
-    name: member.Prescriber?.User?.name || 'Unknown',
-    specialty: member.Prescriber?.specialty || null,
-    phone_number: member.Prescriber?.User?.phone_number || null,
-  }));
+  // Build map of care team members by prescriber_id
+  careTeamMembers.forEach((member) => {
+    const prescriberId = member.prescriber_id;
+    careTeamMap.set(prescriberId, {
+      member_id: member.member_id,
+      prescriber_id: prescriberId,
+      role: member.role || "Member",
+      name: member.Prescriber?.User?.name || "Unknown",
+      specialty: member.Prescriber?.specialty || null,
+      phone_number: member.Prescriber?.User?.phone_number || null,
+    });
+    members.push(careTeamMap.get(prescriberId));
+  });
+
+  // 2. Fetch distinct prescribers from prescriptions for this patient
+  const prescriptionPrescribers = await Prescription.findAll({
+    where: { patient_id: patientId },
+    attributes: ["prescriber_id"],
+    group: ["prescriber_id"],
+    raw: true,
+  });
+
+  const prescriberIds = prescriptionPrescribers
+    .map((p) => p.prescriber_id)
+    .filter((id) => id !== null);
+
+  if (prescriberIds.length > 0) {
+    // Fetch full prescriber details including User
+    const prescribers = await Prescriber.findAll({
+      where: { prescriber_id: { [Op.in]: prescriberIds } },
+      include: [
+        {
+          model: User,
+          attributes: { exclude: ["password_hash"] },
+        },
+      ],
+    });
+
+    prescribers.forEach((prescriber) => {
+      const prescriberId = prescriber.prescriber_id;
+      if (!careTeamMap.has(prescriberId)) {
+        // Not in care team, add as synthetic member
+        members.push({
+          member_id: -prescriberId, // negative to avoid collision with real IDs
+          prescriber_id: prescriberId,
+          role: "Prescriber",
+          name: prescriber.User?.name || "Unknown",
+          specialty: prescriber.specialty || null,
+          phone_number: prescriber.User?.phone_number || null,
+        });
+      }
+      // else: already in care team, skip
+    });
+  }
+
+  // Sort members by name
+  members.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
   return { members };
 }
+
 module.exports = {
   findById,
   findByUserId,

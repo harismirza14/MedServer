@@ -8,6 +8,8 @@ const prescriptionRoutes = require("./routes/prescriptionRoutes");
 const masterDataRoutes = require("./routes/masterDataRoutes");
 const prescriberRoutes = require("./routes/prescriberRoutes");
 const careTeamRoutes = require("./routes/careTeamRoutes");
+const availabilityRoutes = require("./routes/availabilityRoutes");
+const appointmentRoutes = require("./routes/appointmentRoutes");
 const authenticate = require("./middlewares/auth");
 const app = express();
 
@@ -20,5 +22,7 @@ app.use("/api", prescriptionRoutes);
 app.use("/api", masterDataRoutes);
 app.use("/api", prescriberRoutes);
 app.use("/api", careTeamRoutes);
+app.use("/api", availabilityRoutes);
+app.use("/api", appointmentRoutes);
 
 module.exports = app;
